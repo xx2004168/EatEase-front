@@ -4,8 +4,39 @@ import { request } from '../utils/request'
 import { getUserInfo } from '../utils/user'
 import type { UserInfo } from '../utils/user'
 
+interface Dish {
+  id: string
+  name: string
+  price?: number
+  imgUrl?: string
+  description?: string
+  [key: string]: any
+}
+
+const props = defineProps<{
+  merchantId: string
+  merchantName: string
+}>()
+
+const emit = defineEmits<{
+  back: []
+  logout: []
+  profile: []
+}>()
+
+function handleProfile() {
+  emit('profile')
+}
+
 const currentUser = ref<UserInfo | null>(getUserInfo())
 const showUserMenu = ref(false)
+
+const dishes = ref<Dish[]>([])
+const loading = ref(false)
+const current = ref(1)
+const size = ref(10)
+const total = ref(0)
+const error = ref('')
 
 function toggleUserMenu() {
   showUserMenu.value = !showUserMenu.value
@@ -15,95 +46,13 @@ function closeUserMenu() {
   showUserMenu.value = false
 }
 
-interface Merchant {
-  id: string
-  name: string
-  imgUrl?: string
-  phone?: string
-  canteenId?: string
-  isOpen?: number | boolean
-  canteenName?: string
-  [key: string]: any
-}
-
-const canteenCache = new Map<string, string>()
-
-async function fetchCanteenName(canteenId: string | number): Promise<string> {
-  const key = String(canteenId)
-  if (canteenCache.has(key)) {
-    return canteenCache.get(key)!
-  }
-  
-  try {
-    const response = await request(`http://localhost:8080/canteen/getById?id=${key}`)
-    console.log(`[Canteen] Fetching ID: ${key}, Status: ${response.status}`)
-    if (response.ok) {
-      const result = await response.json()
-      console.log(`[Canteen] Response for ID ${key}:`, result)
-      const data = result.data ?? result
-      const name = data.name ?? data.canteenName ?? data.title ?? ''
-      canteenCache.set(key, name)
-      return name
-    } else {
-      console.error(`[Canteen] Failed to fetch ID ${key}: ${response.status}`)
-    }
-  } catch (err) {
-    console.error('获取食堂信息失败:', err)
-  }
-  
-  return ''
-}
-
-async function loadCanteenNames() {
-  const canteenIds = [...new Set(merchants.value.map(m => m.canteenId).filter(Boolean))]
-  console.log('[Canteen] Unique canteen IDs to fetch:', canteenIds)
-  console.log('[Canteen] Current merchants:', merchants.value.map(m => ({ id: m.id, canteenId: m.canteenId })))
-  
-  await Promise.all(
-    canteenIds.map(async (id) => {
-      const name = await fetchCanteenName(id!)
-      console.log(`[Canteen] Fetched name for ID ${id}:`, name)
-      merchants.value
-        .filter(m => String(m.canteenId) === String(id))
-        .forEach(m => m.canteenName = name)
-    })
-  )
-  
-  console.log('[Canteen] Merchants after loading names:', merchants.value.map(m => ({ id: m.id, canteenId: m.canteenId, canteenName: m.canteenName })))
-}
-
-const merchants = ref<Merchant[]>([])
-const loading = ref(false)
-const current = ref(1)
-const size = ref(10)
-const total = ref(0)
-const error = ref('')
-
-const emit = defineEmits<{
-  logout: []
-  profile: []
-  selectMerchant: [data: { id: string; name: string }]
-}>()
-
-function handleProfile() {
-  emit('profile')
-}
-
-function handleSelectMerchant(merchant: Merchant) {
-  emit('selectMerchant', { id: merchant.id, name: merchant.name })
-}
-
-function isMerchantOpen(isOpen: number | boolean | undefined): boolean {
-  return isOpen === 1 || isOpen === true
-}
-
-async function fetchMerchants() {
+async function fetchDishes() {
   loading.value = true
   error.value = ''
 
   try {
     const response = await request(
-      `http://localhost:8080/merchant/list?current=${current.value}&size=${size.value}`
+      `http://localhost:8080/dish/list?current=${current.value}&size=${size.value}&merchantId=${props.merchantId}`
     )
 
     if (!response.ok) {
@@ -111,15 +60,13 @@ async function fetchMerchants() {
         emit('logout')
         throw new Error('登录已过期，请重新登录')
       }
-      throw new Error('获取商家列表失败')
+      throw new Error('获取菜品列表失败')
     }
 
     const result = await response.json()
     const data = result.data ?? result
-    merchants.value = data.records ?? data.list ?? []
+    dishes.value = data.records ?? data.list ?? []
     total.value = data.total ?? 0
-    
-    await loadCanteenNames()
   } catch (err: any) {
     error.value = err.message || '加载失败，请稍后重试'
   } finally {
@@ -129,10 +76,8 @@ async function fetchMerchants() {
 
 function handlePageChange(page: number) {
   current.value = page
-  fetchMerchants()
+  fetchDishes()
 }
-
-const totalPages = computed(() => Math.ceil(total.value / size.value))
 
 function handleClickOutside(event: MouseEvent) {
   const target = event.target as HTMLElement
@@ -141,20 +86,25 @@ function handleClickOutside(event: MouseEvent) {
   }
 }
 
+const totalPages = computed(() => Math.ceil(total.value / size.value))
+
 onMounted(() => {
-  fetchMerchants()
+  fetchDishes()
   document.addEventListener('click', handleClickOutside)
 })
 </script>
 
 <template>
-  <div class="merchant-page">
+  <div class="dish-page">
     <header class="page-header">
       <div class="header-left">
-        <h1 class="logo">EatEase</h1>
-        <span class="divider"></span>
-        <span class="page-title">商家列表</span>
-        <span class="count-badge" v-if="total > 0">{{ total }} 家</span>
+        <button class="back-btn" @click="$emit('back')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
+        <h1 class="page-title">{{ merchantName }} - 菜品列表</h1>
+        <span class="count-badge" v-if="total > 0">{{ total }} 个菜品</span>
       </div>
       <div class="user-menu-wrapper" @click.stop="toggleUserMenu">
         <div class="user-avatar-btn">
@@ -188,7 +138,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <main class="merchant-content">
+    <main class="dish-content">
       <div v-if="loading" class="loading-container">
         <div class="loading-spinner"></div>
         <span>加载中...</span>
@@ -201,65 +151,43 @@ onMounted(() => {
           <line x1="12" y1="16" x2="12.01" y2="16"></line>
         </svg>
         <p>{{ error }}</p>
-        <button class="retry-btn" @click="fetchMerchants">重试</button>
+        <button class="retry-btn" @click="fetchDishes">重试</button>
       </div>
 
-      <div v-else-if="merchants.length === 0" class="empty-container">
+      <div v-else-if="dishes.length === 0" class="empty-container">
         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-          <polyline points="9 22 9 12 15 12 15 22"></polyline>
+          <path d="M18 8h1a4 4 0 0 1 0 8h-1"></path>
+          <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path>
+          <line x1="6" y1="1" x2="6" y2="4"></line>
+          <line x1="10" y1="1" x2="10" y2="4"></line>
+          <line x1="14" y1="1" x2="14" y2="4"></line>
         </svg>
-        <p>暂无商家</p>
+        <p>暂无菜品</p>
       </div>
 
-      <div v-else class="merchant-grid">
+      <div v-else class="dish-grid">
         <div
-          v-for="merchant in merchants"
-          :key="merchant.id"
-          class="merchant-card"
-          @click="handleSelectMerchant(merchant)"
+          v-for="dish in dishes"
+          :key="dish.id"
+          class="dish-card"
         >
-          <div class="card-top">
-            <div class="card-avatar">
-              <img
-                v-if="merchant.imgUrl"
-                :src="merchant.imgUrl"
-                :alt="merchant.name"
-              />
-              <div v-else class="avatar-placeholder">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-                  <polyline points="9 22 9 12 15 12 15 22"></polyline>
-                </svg>
-              </div>
-            </div>
-
-            <div class="card-header-info">
-              <h3 class="merchant-name">{{ merchant.name || '未命名商家' }}</h3>
-              <span class="status-dot" :class="{ active: isMerchantOpen(merchant.isOpen) }"></span>
+          <div class="dish-image">
+            <img v-if="dish.imgUrl" :src="dish.imgUrl" :alt="dish.name" />
+            <div v-else class="image-placeholder">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M18 8h1a4 4 0 0 1 0 8h-1"></path>
+                <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path>
+                <line x1="6" y1="1" x2="6" y2="4"></line>
+                <line x1="10" y1="1" x2="10" y2="4"></line>
+                <line x1="14" y1="1" x2="14" y2="4"></line>
+              </svg>
             </div>
           </div>
-
-          <div class="card-details">
-            <div v-if="merchant.phone" class="detail-item">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
-              </svg>
-              <span>{{ merchant.phone }}</span>
-            </div>
-            <div v-if="merchant.canteenId" class="detail-item">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-                <polyline points="9 22 9 12 15 12 15 22"></polyline>
-              </svg>
-              <span>{{ merchant.canteenName || '食堂 ID: ' + merchant.canteenId }}</span>
-            </div>
-          </div>
-
-          <div class="card-popular">
-            <span class="popular-label">热门菜品</span>
-            <div class="popular-placeholder">
-              <span>暂无菜品</span>
+          <div class="dish-info">
+            <h3 class="dish-name">{{ dish.name || '未命名菜品' }}</h3>
+            <p v-if="dish.description" class="dish-desc">{{ dish.description }}</p>
+            <div class="dish-footer">
+              <span v-if="dish.price !== undefined" class="dish-price">¥{{ dish.price }}</span>
             </div>
           </div>
         </div>
@@ -303,7 +231,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.merchant-page {
+.dish-page {
   min-height: 100vh;
   background: #f8f9fc;
 }
@@ -324,24 +252,30 @@ onMounted(() => {
   gap: 16px;
 }
 
-.logo {
-  font-size: 22px;
-  font-weight: 800;
-  color: #1a1a2e;
-  margin: 0;
-  letter-spacing: -0.5px;
+.back-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-.divider {
-  width: 1px;
-  height: 20px;
-  background: #e5e7eb;
+.back-btn:hover {
+  background: #f3f4f6;
+  color: #6366f1;
 }
 
 .page-title {
-  font-size: 15px;
-  color: #6b7280;
-  font-weight: 500;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0;
 }
 
 .count-badge {
@@ -466,7 +400,7 @@ onMounted(() => {
   margin: 4px 0;
 }
 
-.merchant-content {
+.dish-content {
   max-width: 1120px;
   margin: 0 auto;
   padding: 40px 48px;
@@ -523,49 +457,39 @@ onMounted(() => {
   color: #d1d5db;
 }
 
-.merchant-grid {
+.dish-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 24px;
 }
 
-.merchant-card {
+.dish-card {
   background: #ffffff;
   border-radius: 16px;
   overflow: hidden;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   border: 1px solid #f0f0f5;
-  cursor: pointer;
 }
 
-.merchant-card:hover {
+.dish-card:hover {
   transform: translateY(-4px);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06);
 }
 
-.card-top {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 24px 24px 0;
-}
-
-.card-avatar {
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
+.dish-image {
+  width: 100%;
+  height: 180px;
   overflow: hidden;
   background: #f5f6fa;
-  flex-shrink: 0;
 }
 
-.card-avatar img {
+.dish-image img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.avatar-placeholder {
+.image-placeholder {
   width: 100%;
   height: 100%;
   display: flex;
@@ -574,83 +498,41 @@ onMounted(() => {
   color: #c5c8d1;
 }
 
-.card-header-info {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-width: 0;
+.dish-info {
+  padding: 16px;
 }
 
-.merchant-name {
-  margin: 0;
+.dish-name {
+  margin: 0 0 8px;
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   color: #1a1a2e;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.status-dot {
-  width: 8px;
-  height: 8px;
-  background: #e5e7eb;
-  border-radius: 50%;
-  flex-shrink: 0;
-  transition: all 0.3s;
-}
-
-.status-dot.active {
-  background: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
-}
-
-.card-details {
-  display: flex;
-  gap: 16px;
-  padding: 16px 24px;
-}
-
-.detail-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #9ca3af;
+.dish-desc {
+  margin: 0 0 12px;
   font-size: 13px;
-}
-
-.detail-item svg {
-  flex-shrink: 0;
-}
-
-.card-popular {
-  padding: 16px 24px;
-  border-top: 1px solid #f5f6fa;
-}
-
-.popular-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
   color: #6b7280;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 8px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.popular-placeholder {
-  height: 40px;
-  background: #f8f9fc;
-  border-radius: 8px;
+.dish-footer {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
 }
 
-.popular-placeholder span {
-  font-size: 12px;
-  color: #c5c8d1;
+.dish-price {
+  font-size: 18px;
+  font-weight: 700;
+  color: #ef4444;
 }
 
 .pagination {
